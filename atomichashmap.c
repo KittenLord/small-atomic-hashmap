@@ -7,6 +7,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+// TODO: obviously needs rebalancing functionality, but ill add it later lol
+
 // https://github.com/fabiogaluppo/fnv/blob/main/fnv64.hpp
 // from here
 uint64_t shiftSum(uint64_t v) {
