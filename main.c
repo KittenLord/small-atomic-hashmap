@@ -4,13 +4,21 @@
 
 int main() {
 
-    struct AtomicHashmap hm = createHM();
-    setHM(&hm, "ABOBA", 5, "TEST", 4);
-    setHM(&hm, "ABOBB", 5, "TEST", 4);
-    setHM(&hm, "ABOBC", 5, "TEST", 4);
+    struct AtomicHashmap hm = createHM_SX(int);
 
-    printf("%d\n", fnv64hash("ABOBA", 5) % 32);
-    printf("%d\n", fnv64hash("ZUZ", 3) % 32);
+    // TODO: i'm not sure if it is possible to improve, but this looks quite bad
+    // maybe in practice it's not that bad though
+    int one = 1;
+    int two = 2;
+    int thr = 3;
+
+    setHM_SX(&hm, &one, "ABOBA", 5);
+    setHM_SX(&hm, &two, "TEST", 4);
+    setHM_SX(&hm, &thr, "GUG", 3);
+
+    printf("%s\n", getHM_SX(&hm, &one, NULL));
+    printf("%s\n", getHM_SX(&hm, &two, NULL));
+    printf("%s\n", getHM_SX(&hm, &thr, NULL));
 
     return 0;
 }

@@ -2,7 +2,7 @@
 #define KITTENLORD_ATOMIC_HASHMAP__
 
 #include <stdlib.h>
-#include <stdio.h>
+#include <stdio.h> 
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -39,6 +39,9 @@ struct AtomicHashmap {
     _Atomic bool                locked;
 
     size_t                      capacity;
+
+    size_t                      tyA;
+    size_t                      tyB;
     
     size_t                      maxChain;
     size_t                      count;
@@ -95,6 +98,9 @@ cleanup:
     return result;
 }
 
+#define getHM_SX(hm, key, dataLen) getHM(hm, (uint8_t *)(key), (hm)->tyA, dataLen)
+#define getHM_XS(hm, key, keyLen) getHM(hm, (uint8_t *)(key), keyLen, NULL)
+#define getHM_SS(hm, key) getHM(hm, (uint8_t *)(key), (hm)->tyA, NULL)
 uint8_t *getHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, size_t *dataLen) {
     while(hm->locked) {}
     hm->locked = true;
@@ -118,8 +124,9 @@ cleanup:
     return NULL;
 }
 
-// #define setHM_NX(hm, key, data, dataLen) setHM(hm, key, strlen(key), data, dataLen)
-// #define setHM_FF(hm, key, data) setHM(hm key, sizeof(key), data, sizeof(data))
+#define setHM_SX(hm, key, data, dataLen) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), dataLen)
+#define setHM_XS(hm, key, keyLen, data) setHM(hm, (uint8_t *)(key), keyLen, (uint8_t *)(data), (hm)->tyB)
+#define setHM_SS(hm, key, data) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), (hm)->tyB)
 void setHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, uint8_t *data, size_t dataLen) {
     while(hm->locked) {}
     hm->locked = true;
@@ -168,17 +175,24 @@ cleanup:
     hm->locked = false;
 }
 
+
+#define createHMAll(cap, a, b) ((struct AtomicHashmap){ \
+    .locked = false, \
+    .capacity = cap, \
+    .maxChain = 0, \
+    .count = 0, \
+    .tyA = a, \
+    .tyB = b, \
+    .nodes = calloc(cap, sizeof(struct AtomicHashmapNode *)) \
+})
+
 #define HM_INITCAPACITY 32
-#define createHM() createCapHM(HM_INITCAPACITY)
-// TODO: maybe malloc it and return a pointer? idk
-struct AtomicHashmap createCapHM(size_t capacity) {
-    return (struct AtomicHashmap){ 
-        .locked = false, 
-        .capacity = capacity, 
-        .maxChain = 0, 
-        .nodes = calloc(capacity, sizeof(struct AtomicHashmapNode *))
-    };
-}
+
+#define createHM_SX(ty) createHMAll(HM_INITCAPACITY, sizeof(ty), 0)
+#define createHM_XS(ty) createHMAll(HM_INITCAPACITY, 0, sizeof(ty))
+#define createHM_SS(tyA, tyB) createHMAll(HM_INITCAPACITY, sizeof(tyA), sizeof(tyB))
+#define createHM() createHMAll(HM_INITCAPACITY, 0, 0)
+
 
 #else
 #endif
