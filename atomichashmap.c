@@ -48,6 +48,7 @@ struct AtomicHashmap {
     .nodes = calloc(cap, sizeof(struct AtomicHashmapNode *)) \
 })
 
+// Please be responsible :D
 void acquireLock(struct AtomicHashmap *hm);
 void releaseLock(struct AtomicHashmap *hm);
 
@@ -65,14 +66,10 @@ bool removeHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen);
 
 // https://github.com/fabiogaluppo/fnv/blob/main/fnv64.hpp
 // from here
-uint64_t shiftSum(uint64_t v) {
-    return (v << 1) + (v << 4) + (v << 5) + (v << 7) + (v << 8) + (v << 40);
-}
-
 uint64_t fnv64hash(uint8_t *data, size_t len) {
     uint64_t h = 0xcbf29ce484222325ULL;
     while (len--) {
-        h += shiftSum(h);
+        h += (h << 1) + (h << 4) + (h << 5) + (h << 7) + (h << 8) + (h << 40);
         h ^= (uint64_t)(*data++);
     }
     return h;
