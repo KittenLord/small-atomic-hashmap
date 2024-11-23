@@ -9,22 +9,6 @@
 
 // TODO: obviously needs rebalancing functionality, but ill add it later lol
 
-// https://github.com/fabiogaluppo/fnv/blob/main/fnv64.hpp
-// from here
-uint64_t shiftSum(uint64_t v) {
-    return (v << 1) + (v << 4) + (v << 5) + (v << 7) + (v << 8) + (v << 40);
-}
-
-uint64_t fnv64hash(uint8_t *data, size_t len) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    while (len--) {
-        h += shiftSum(h);
-        h ^= (uint64_t)(*data++);
-    }
-    return h;
-}
-// to here
-
 struct AtomicHashmapNode {
     uint8_t                     *key;
     size_t                      keyLen;
@@ -49,6 +33,52 @@ struct AtomicHashmap {
     struct AtomicHashmapNode    **nodes;
 };
 
+#define HM_INITCAPACITY 32
+#define createHM_SX(ty) createHMAll(HM_INITCAPACITY, sizeof(ty), 0)
+#define createHM_XS(ty) createHMAll(HM_INITCAPACITY, 0, sizeof(ty))
+#define createHM_SS(tyA, tyB) createHMAll(HM_INITCAPACITY, sizeof(tyA), sizeof(tyB))
+#define createHM() createHMAll(HM_INITCAPACITY, 0, 0)
+#define createHMAll(cap, a, b) ((struct AtomicHashmap){ \
+    .locked = false, \
+    .capacity = cap, \
+    .maxChain = 0, \
+    .count = 0, \
+    .tyA = a, \
+    .tyB = b, \
+    .nodes = calloc(cap, sizeof(struct AtomicHashmapNode *)) \
+})
+
+void acquireLock(struct AtomicHashmap *hm);
+void releaseLock(struct AtomicHashmap *hm);
+
+#define getHM_SX(hm, key, dataLen) getHM(hm, (uint8_t *)(key), (hm)->tyA, dataLen)
+#define getHM_XS(hm, key, keyLen) getHM(hm, (uint8_t *)(key), keyLen, NULL)
+#define getHM_SS(hm, key) getHM(hm, (uint8_t *)(key), (hm)->tyA, NULL)
+uint8_t *getHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, size_t *dataLen);
+
+#define setHM_SX(hm, key, data, dataLen) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), dataLen)
+#define setHM_XS(hm, key, keyLen, data) setHM(hm, (uint8_t *)(key), keyLen, (uint8_t *)(data), (hm)->tyB)
+#define setHM_SS(hm, key, data) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), (hm)->tyB)
+void setHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, uint8_t *data, size_t dataLen);
+
+bool removeHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen);
+
+// https://github.com/fabiogaluppo/fnv/blob/main/fnv64.hpp
+// from here
+uint64_t shiftSum(uint64_t v) {
+    return (v << 1) + (v << 4) + (v << 5) + (v << 7) + (v << 8) + (v << 40);
+}
+
+uint64_t fnv64hash(uint8_t *data, size_t len) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    while (len--) {
+        h += shiftSum(h);
+        h ^= (uint64_t)(*data++);
+    }
+    return h;
+}
+// to here
+
 void acquireLock(struct AtomicHashmap *hm) { 
     while(hm->locked);  
     hm->locked = true;
@@ -62,73 +92,58 @@ void trySetMaxChain(struct AtomicHashmap *hm, size_t value) {
     if(hm->maxChain < value) hm->maxChain = value;
 }
 
-void freeHMNode(struct AtomicHashmapNode *node) {
+void __freeHMNode(struct AtomicHashmapNode *node) {
     free(node->key);
     free(node->data);
     free(node);
 }
 
-bool nodeMatchesKey(struct AtomicHashmapNode *node, uint8_t *key, size_t keyLen) {
+bool __nodeMatchesKey(struct AtomicHashmapNode *node, uint8_t *key, size_t keyLen) {
     return node->keyLen == keyLen && !memcmp(node->key, key, keyLen);
 }
 
 bool removeHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen) {
-    bool result = false;
-
     size_t hash = fnv64hash(key, keyLen);
     size_t index = hash % hm->capacity;
 
     struct AtomicHashmapNode *node = hm->nodes[index];
-    if(nodeMatchesKey(node, key, keyLen)) {
+    if(__nodeMatchesKey(node, key, keyLen)) {
         hm->nodes[index] = node->next;
-        freeHMNode(node);
-        result = true;
-        goto cleanup;
+        __freeHMNode(node);
+        hm->count--;
+        return true;
     }
 
     while(node->next) {
         struct AtomicHashmapNode *next = node->next;
-        if(nodeMatchesKey(next, key, keyLen)) {
+        if(__nodeMatchesKey(next, key, keyLen)) {
             node->next = next->next;
-            freeHMNode(next);
-            result = true;
-            goto cleanup;
+            __freeHMNode(next);
+            hm->count--;
+            return true;
         }
     }
 
-    result = false;
-    goto cleanup;
-
-cleanup:
-    hm->count -= result;
-    return result;
+    return false;
 }
 
-#define getHM_SX(hm, key, dataLen) getHM(hm, (uint8_t *)(key), (hm)->tyA, dataLen)
-#define getHM_XS(hm, key, keyLen) getHM(hm, (uint8_t *)(key), keyLen, NULL)
-#define getHM_SS(hm, key) getHM(hm, (uint8_t *)(key), (hm)->tyA, NULL)
 uint8_t *getHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, size_t *dataLen) {
     size_t hash = fnv64hash(key, keyLen);
     size_t index = hash % hm->capacity;
 
     struct AtomicHashmapNode *node = hm->nodes[index];
     while(node) {
-        if(nodeMatchesKey(node, key, keyLen)) {
+        if(__nodeMatchesKey(node, key, keyLen)) {
             if(dataLen) *dataLen = node->dataLen;
-            goto cleanup;
+            return node->data;
         }
 
         node = node->next;
     }
 
-cleanup:
-    if(node) return node->data;
     return NULL;
 }
 
-#define setHM_SX(hm, key, data, dataLen) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), dataLen)
-#define setHM_XS(hm, key, keyLen, data) setHM(hm, (uint8_t *)(key), keyLen, (uint8_t *)(data), (hm)->tyB)
-#define setHM_SS(hm, key, data) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), (hm)->tyB)
 void setHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, uint8_t *data, size_t dataLen) {
     size_t hash = fnv64hash(key, keyLen);
     size_t index = hash % hm->capacity;
@@ -141,12 +156,12 @@ void setHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, uint8_t *data,
 
     do {
         struct AtomicHashmapNode *node = *insertNode;
-        if(nodeMatchesKey(node, key, keyLen)) {
+        if(__nodeMatchesKey(node, key, keyLen)) {
             free(node->data);
             node->data = malloc(dataLen);
             node->dataLen = dataLen;
             memcpy(node->data, data, dataLen);
-            goto cleanup;
+            return;
         }
 
         insertNode = &(node->next);
@@ -169,27 +184,7 @@ insert:
     *insertNode = node;
     trySetMaxChain(hm, maxChain);
     hm->count++;
-
-cleanup:
 }
-
-#define createHMAll(cap, a, b) ((struct AtomicHashmap){ \
-    .locked = false, \
-    .capacity = cap, \
-    .maxChain = 0, \
-    .count = 0, \
-    .tyA = a, \
-    .tyB = b, \
-    .nodes = calloc(cap, sizeof(struct AtomicHashmapNode *)) \
-})
-
-#define HM_INITCAPACITY 32
-
-#define createHM_SX(ty) createHMAll(HM_INITCAPACITY, sizeof(ty), 0)
-#define createHM_XS(ty) createHMAll(HM_INITCAPACITY, 0, sizeof(ty))
-#define createHM_SS(tyA, tyB) createHMAll(HM_INITCAPACITY, sizeof(tyA), sizeof(tyB))
-#define createHM() createHMAll(HM_INITCAPACITY, 0, 0)
-
 
 #else
 #endif
