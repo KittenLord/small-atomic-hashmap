@@ -12,6 +12,7 @@ int main() {
     int two = 2;
     int thr = 3;
 
+    acquireLock(&hm);
     setHM_SX(&hm, &one, "ABOBA", 5);
     setHM_SX(&hm, &two, "TEST", 4);
     setHM_SX(&hm, &thr, "GUG", 3);
@@ -19,6 +20,7 @@ int main() {
     printf("%s\n", getHM_SX(&hm, &one, NULL));
     printf("%s\n", getHM_SX(&hm, &two, NULL));
     printf("%s\n", getHM_SX(&hm, &thr, NULL));
+    releaseLock(&hm);
 
     return 0;
 }

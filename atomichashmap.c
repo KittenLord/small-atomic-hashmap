@@ -49,6 +49,15 @@ struct AtomicHashmap {
     struct AtomicHashmapNode    **nodes;
 };
 
+void acquireLock(struct AtomicHashmap *hm) { 
+    while(hm->locked);  
+    hm->locked = true;
+}
+
+void releaseLock(struct AtomicHashmap *hm) {
+    hm->locked = false;
+}
+
 void trySetMaxChain(struct AtomicHashmap *hm, size_t value) {
     if(hm->maxChain < value) hm->maxChain = value;
 }
@@ -64,8 +73,6 @@ bool nodeMatchesKey(struct AtomicHashmapNode *node, uint8_t *key, size_t keyLen)
 }
 
 bool removeHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen) {
-    while(hm->locked) {}
-    hm->locked = true;
     bool result = false;
 
     size_t hash = fnv64hash(key, keyLen);
@@ -94,7 +101,6 @@ bool removeHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen) {
 
 cleanup:
     hm->count -= result;
-    hm->locked = false;
     return result;
 }
 
@@ -102,9 +108,6 @@ cleanup:
 #define getHM_XS(hm, key, keyLen) getHM(hm, (uint8_t *)(key), keyLen, NULL)
 #define getHM_SS(hm, key) getHM(hm, (uint8_t *)(key), (hm)->tyA, NULL)
 uint8_t *getHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, size_t *dataLen) {
-    while(hm->locked) {}
-    hm->locked = true;
-
     size_t hash = fnv64hash(key, keyLen);
     size_t index = hash % hm->capacity;
 
@@ -119,7 +122,6 @@ uint8_t *getHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, size_t *da
     }
 
 cleanup:
-    hm->locked = false;
     if(node) return node->data;
     return NULL;
 }
@@ -128,9 +130,6 @@ cleanup:
 #define setHM_XS(hm, key, keyLen, data) setHM(hm, (uint8_t *)(key), keyLen, (uint8_t *)(data), (hm)->tyB)
 #define setHM_SS(hm, key, data) setHM(hm, (uint8_t *)(key), (hm)->tyA, (uint8_t *)(data), (hm)->tyB)
 void setHM(struct AtomicHashmap *hm, uint8_t *key, size_t keyLen, uint8_t *data, size_t dataLen) {
-    while(hm->locked) {}
-    hm->locked = true;
-
     size_t hash = fnv64hash(key, keyLen);
     size_t index = hash % hm->capacity;
 
@@ -172,9 +171,7 @@ insert:
     hm->count++;
 
 cleanup:
-    hm->locked = false;
 }
-
 
 #define createHMAll(cap, a, b) ((struct AtomicHashmap){ \
     .locked = false, \
